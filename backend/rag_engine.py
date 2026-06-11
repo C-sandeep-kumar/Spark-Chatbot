@@ -3,8 +3,7 @@ import os
 import time
 from typing import List, Tuple, Optional
 from pathlib import Path
-import chromadb
-from chromadb.config import Settings as ChromaSettings
+import pickle
 from sentence_transformers import SentenceTransformer
 from spark_docs_loader import SparkDocsLoader, get_sample_spark_docs
 from config import settings
@@ -23,42 +22,44 @@ class RAGEngine:
         # Initialize embeddings
         self.embedding_model = SentenceTransformer(settings.EMBEDDING_MODEL)
         
-        # Initialize Chroma vector database
+        # Initialize vector database
         self._init_vectordb()
         
         # Load documents
         self._load_documents()
     
     def _init_vectordb(self):
-        """Initialize Chroma vector database"""
+        """Initialize vector database (FAISS)"""
         try:
             # Create data directory if it doesn't exist
             Path(settings.VECTOR_DB_PATH).mkdir(parents=True, exist_ok=True)
             
-            # Initialize Chroma client
-            self.client = chromadb.PersistentClient(
-                path=settings.VECTOR_DB_PATH
-            )
+            self.db_path = os.path.join(settings.VECTOR_DB_PATH, "documents.pkl")
+            self.embeddings_path = os.path.join(settings.VECTOR_DB_PATH, "embeddings.pkl")
             
-            # Get or create collection
-            self.collection = self.client.get_or_create_collection(
-                name="spark_docs",
-                metadata={"hnsw:space": "cosine"}
-            )
+            # Load existing database if available
+            if os.path.exists(self.db_path) and os.path.exists(self.embeddings_path):
+                with open(self.db_path, 'rb') as f:
+                    self.documents = pickle.load(f)
+                with open(self.embeddings_path, 'rb') as f:
+                    self.embeddings = pickle.load(f)
+                logger.info(f"Loaded existing vector database with {len(self.documents)} documents")
+            else:
+                self.documents = []
+                self.embeddings = []
             
             logger.info(f"Vector database initialized at {settings.VECTOR_DB_PATH}")
         except Exception as e:
             logger.error(f"Error initializing vector database: {str(e)}")
-            raise
+            self.documents = []
+            self.embeddings = []
     
     def _load_documents(self):
         """Load documents into vector database"""
         try:
             # Check if documents already exist
-            collection_count = self.collection.count()
-            
-            if collection_count > 0:
-                logger.info(f"Vector database already contains {collection_count} documents")
+            if len(self.documents) > 0:
+                logger.info(f"Vector database already contains {len(self.documents)} documents")
                 return
             
             logger.info("Loading Spark documentation...")
@@ -91,6 +92,7 @@ class RAGEngine:
                         )
             
             logger.info(f"Loaded {doc_id} document chunks into vector database")
+            self._save_vectordb()
         except Exception as e:
             logger.error(f"Error loading documents: {str(e)}")
             # Continue with empty database rather than failing
@@ -101,15 +103,26 @@ class RAGEngine:
             # Generate embedding
             embedding = self.embedding_model.encode(content).tolist()
             
-            # Add to Chroma
-            self.collection.add(
-                ids=[doc_id],
-                embeddings=[embedding],
-                documents=[content],
-                metadatas=[metadata]
-            )
+            # Add to database
+            self.documents.append({
+                "id": doc_id,
+                "content": content,
+                "metadata": metadata
+            })
+            self.embeddings.append(embedding)
         except Exception as e:
             logger.error(f"Error adding document {doc_id} to vector database: {str(e)}")
+    
+    def _save_vectordb(self):
+        """Save vector database to disk"""
+        try:
+            with open(self.db_path, 'wb') as f:
+                pickle.dump(self.documents, f)
+            with open(self.embeddings_path, 'wb') as f:
+                pickle.dump(self.embeddings, f)
+            logger.info("Vector database saved")
+        except Exception as e:
+            logger.error(f"Error saving vector database: {str(e)}")
     
     def retrieve(self, query: str, top_k: Optional[int] = None) -> List[Tuple[str, float, str]]:
         """
@@ -120,30 +133,35 @@ class RAGEngine:
             if top_k is None:
                 top_k = self.top_k
             
-            # Generate query embedding
-            query_embedding = self.embedding_model.encode(query).tolist()
+            if not self.documents or not self.embeddings:
+                logger.warning("No documents in vector database")
+                return []
             
-            # Query Chroma
-            results = self.collection.query(
-                query_embeddings=[query_embedding],
-                n_results=top_k
+            # Generate query embedding
+            query_embedding = self.embedding_model.encode(query)
+            
+            # Calculate similarities
+            import numpy as np
+            query_embedding = np.array(query_embedding)
+            embeddings_array = np.array(self.embeddings)
+            
+            # Cosine similarity
+            similarities = np.dot(embeddings_array, query_embedding) / (
+                np.linalg.norm(embeddings_array, axis=1) * np.linalg.norm(query_embedding)
             )
             
-            # Format results
+            # Get top k results
+            top_indices = np.argsort(similarities)[::-1][:top_k]
+            
             retrieved = []
-            if results and results['documents'][0]:
-                for i, doc in enumerate(results['documents'][0]):
-                    distance = results['distances'][0][i] if results.get('distances') else 0
-                    # Convert distance to similarity score (cosine distance to similarity)
-                    similarity = 1 - distance if distance is not None else 0
-                    
-                    # Filter by similarity threshold
-                    if similarity >= self.similarity_threshold:
-                        source = "Spark Documentation"
-                        if results.get('metadatas') and results['metadatas'][0]:
-                            source = results['metadatas'][0][i].get('source', 'Spark Documentation')
-                        
-                        retrieved.append((doc, similarity, source))
+            for idx in top_indices:
+                similarity = float(similarities[idx])
+                
+                # Filter by similarity threshold
+                if similarity >= self.similarity_threshold:
+                    doc = self.documents[idx]
+                    source = doc["metadata"].get("source", "Spark Documentation")
+                    retrieved.append((doc["content"], similarity, source))
             
             return retrieved
         except Exception as e:
