@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Spark Chatbot - Apache Spark Q&A</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🚀 Spark Chatbot</h1>
+            <p>Ask anything about Apache Spark</p>
+        </div>
+
+        <div class="chat-container">
+            <div class="messages" id="messagesContainer">
+                <div class="message assistant-message">
+                    <div class="message-content">
+                        <p>Hello! I'm your Apache Spark expert. Ask me anything about Spark - from DataFrames and SQL to MLlib, Streaming, and more!</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="input-area">
+                <div class="input-wrapper">
+                    <input 
+                        type="text" 
+                        id="queryInput" 
+                        placeholder="Ask a question about Apache Spark..."
+                        autocomplete="off"
+                    >
+                    <button id="sendBtn" class="send-btn">Send</button>
+                </div>
+                <div class="status" id="statusDiv"></div>
+            </div>
+        </div>
+
+        <div class="info">
+            <p>Powered by RAG (Retrieval Augmented Generation) with Official Spark Documentation</p>
+        </div>
+    </div>
+
+    <!-- Modal for sources -->
+    <div id="sourcesModal" class="modal">
+        <div class="modal-content">
+            <span class="close">&times;</span>
+            <h2>Sources</h2>
+            <div id="sourcesList"></div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
