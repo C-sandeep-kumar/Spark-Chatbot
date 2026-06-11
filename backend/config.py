@@ -1,6 +1,10 @@
 import os
 from pydantic_settings import BaseSettings
 from typing import Optional
+from dotenv import load_dotenv
+
+# Load .env file
+load_dotenv()
 
 class Settings(BaseSettings):
     # Application
@@ -24,7 +28,7 @@ class Settings(BaseSettings):
     
     # Vector Database
     VECTOR_DB_PATH: str = os.getenv("VECTOR_DB_PATH", "./data/vectordb")
-    VECTOR_DB_TYPE: str = "chroma"  # Options: chroma, faiss
+    VECTOR_DB_TYPE: str = "faiss"  # Options: chroma, faiss
     
     # RAG Settings
     CHUNK_SIZE: int = int(os.getenv("CHUNK_SIZE", 1000))
